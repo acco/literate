@@ -1,0 +1,4 @@
+filter_lines_matching:
+  - '^\s*\#'
+  - '^\s*\<\-\-\!'
+filter_leanpub_code_comments: true

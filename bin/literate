@@ -1,0 +1,61 @@
+#!/usr/bin/env ruby
+
+require 'literate'
+require 'pathname'
+require 'fileutils'
+
+# Literate extracts code from Leanpub Markdown files.
+#
+# Usage
+#
+#   literate [markdown_file] [template_directory]
+#
+# Examples
+#
+#   literate chapters/2-components.md code/public
+
+USAGE_TEXT = %{
+Usage:
+\tliterate [markdown_file] [template_directory]
+}
+
+if ARGV.empty?
+  abort(USAGE_TEXT)
+end
+
+if ARGV[0] == '--gen-rc'
+  puts 'Generating .literaterc...'
+  target = File.join(Dir.pwd, '.literaterc')
+  if File.exists?(target)
+    puts "\tAbort! .literaterc already exists."
+    puts "\t#{target}"
+  else
+    source = File.expand_path(File.join(__FILE__, '../../','literaterc.example'))
+    FileUtils.cp(source, target)
+    puts 'Done.'
+  end
+  abort
+end
+
+markdown_file = ARGV[0]
+template_directory = ARGV[1]
+
+if markdown_file.blank?
+  puts 'Error: Expected argument `markdown_file`'
+  abort(USAGE_TEXT)
+end
+
+if template_directory.blank?
+  puts 'Error: Expected argument `template_directory`'
+  abort(USAGE_TEXT)
+end
+
+unless Pathname.new(markdown_file).absolute?
+  markdown_file = File.join(Dir.pwd, markdown_file)
+end
+
+unless Pathname.new(template_directory).absolute?
+  template_directory = File.join(Dir.pwd, template_directory)
+end
+
+Literate::extract_and_render(markdown_file, template_directory)
