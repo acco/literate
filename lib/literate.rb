@@ -2,6 +2,7 @@ require 'literate/version'
 require 'literate/config'
 require 'fileutils'
 require 'erb'
+require 'ostruct'
 
 module Literate
 
@@ -152,6 +153,7 @@ module Literate
           blocks_for_template = blocks.select { |b| b.template == template }
 
           namespace.merge(blocks_for_template)
+          namespace.set_meta({'version' => version})
           t = File.open(template_file).read
           result = ERB.new(t).result(namespace.get_binding)
           File.open(output_file, 'w+') do |f|
@@ -207,6 +209,11 @@ module Literate
         blocks.each do |block|
           instance_variable_set('@' + block.name, block.blob)
         end
+      end
+
+      def set_meta(meta)
+        @literate ||= OpenStruct.new
+        @literate.meta = meta
       end
 
       def get_binding
