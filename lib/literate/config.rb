@@ -8,7 +8,8 @@ module Literate
           f = config['filter_lines_matching'] || []
           f.map! { |m| Regexp.new(m) }
           if filter_leanpub_code_comments
-            f << /^\s*\<\!\-\-\s*leanpub/
+            f << /^\s*\<\!\-\-\s*leanpub/ #html
+            f << /^\s*\/\/\s*leanpub/     #js
           end
           f
         end

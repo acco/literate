@@ -14,9 +14,27 @@ require 'fileutils'
 #
 #   literate chapters/2-components.md code/public
 
+def verify_and_resolve_paths!(paths)
+  paths.each do |name, path|
+    if path.nil? || path.empty?
+      puts "Error: Expected argument `#{name.to_s}`"
+      abort(USAGE_TEXT)
+    end
+
+    unless Pathname.new(path).absolute?
+      path = File.join(Dir.pwd, path)
+    end
+  end
+
+  return paths.values
+end
+
 USAGE_TEXT = %{
 Usage:
-\tliterate [markdown_file] [template_directory]
+\tExtract code
+\t\tliterate [markdown_file] [template_directory]
+\tGenerate diff
+\t\tliterate -d [markdown_file] [target_diff_directory]
 }
 
 if ARGV.empty?
@@ -37,25 +55,24 @@ if ARGV[0] == '--gen-rc'
   abort
 end
 
-markdown_file = ARGV[0]
-template_directory = ARGV[1]
+if ARGV[0] == '-d'
+  markdown_file = ARGV[1]
+  target_diff_directory = ARGV[2]
 
-if markdown_file.blank?
-  puts 'Error: Expected argument `markdown_file`'
-  abort(USAGE_TEXT)
+  markdown_file, target_diff_directory = verify_and_resolve_paths!(
+    markdown_file: markdown_file,
+    target_diff_directory: target_diff_directory
+  )
+
+  Literate::extract_and_diff(markdown_file, target_diff_directory)
+else
+  markdown_file = ARGV[0]
+  template_directory = ARGV[1]
+
+  markdown_file, template_directory = verify_and_resolve_paths!(
+    markdown_file: markdown_file,
+    template_directory: template_directory
+  )
+
+  Literate::extract_and_render(markdown_file, template_directory)
 end
-
-if template_directory.blank?
-  puts 'Error: Expected argument `template_directory`'
-  abort(USAGE_TEXT)
-end
-
-unless Pathname.new(markdown_file).absolute?
-  markdown_file = File.join(Dir.pwd, markdown_file)
-end
-
-unless Pathname.new(template_directory).absolute?
-  template_directory = File.join(Dir.pwd, template_directory)
-end
-
-Literate::extract_and_render(markdown_file, template_directory)

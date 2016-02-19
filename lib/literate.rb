@@ -3,21 +3,12 @@ require 'literate/config'
 require 'fileutils'
 require 'erb'
 require 'ostruct'
+require 'diffy'
 
 module Literate
 
   class << self
     def extract_and_render(markdown_file_path, template_directory_path)
-
-      if !File.exists?(markdown_file_path)
-        if !markdown_file_path.match(/\.md$/)
-          markdown_file_path += '.md'
-        end
-        if !File.exists?(markdown_file_path)
-          raise "Error: Unable to find markdown file `#{markdown_file_path}`"
-        end
-      end
-
       if !File.exists?(template_directory_path)
         raise "Error: Unable to find template directory `#{template_directory_path}`"
       end
@@ -27,81 +18,20 @@ module Literate
         raise 'Error: Template files must end with extension `.erb`'
       end
 
-      blocks = []
+      all_blocks = extract_blocks(markdown_file_path)
 
-      begin
-        file = File.open(markdown_file_path, 'r')
-
-        while (!file.eof?) do
-          line = file.readline
-          if line.match(/^\{.*lang=\'[^\']+\'.*\}$/)
-            declaration_lineno = file.lineno
-            vars = line.scan(/(\w+)=\'([^\']+)\'/).to_h
-            values = vars.values_at('name', 'template', 'ver')
-            if values.none?
-              next
-            elsif values.all?
-              lines = []
-              indent_level = Float::INFINITY
-              while !file.eof && (line = file.readline) && (line.match(/^\s/) || line.empty?) do
-                unless should_filter?(line)
-                  unless line == "\n"
-                    indent = line.scan(/^\s+/).first
-                    if indent && !indent.empty?
-                      indent_level = [indent.size, indent_level].min
-                    end
-                  end
-                  lines << line
-                end
-              end
-              unless indent_level == Float::INFINITY
-                lines.map! do |line|
-                  line.gsub(/^\s{#{indent_level}}/, '')
-                end
-              end
-              if lines.empty?
-                warn("Found a literate codeblock declared but nothing inside. (Line: #{declaration_lineno})")
-              else
-                blocks << CodeBlock.new(lines, values[0], values[1], values[2].to_i, declaration_lineno)
-              end
-            else
-              warn("Found an incomplete literate codeblock declaration. (Line: #{declaration_lineno})")
-              v = values.map { |v| '`' + v.inspect + '`' }.join(', ')
-              warn("Got #{v} for `name`, `template`, `ver`")
-            end
-          end
-        end
-      ensure
-        file.close
-      end
-
-      if blocks.empty?
+      if all_blocks.empty?
         warn("No blocks found in file.")
         return
       end
 
-      # Prune extraneous blocks
-      pruned_blocks = []
-      blocks.each do |block|
-        dupe = pruned_blocks.detect do |b|
-          [b.name, b.template, b.ver] == [block.name, block.template, block.ver]
-        end
-        if dupe
-          warn("Found a duplicate block declaration. Skipping.")
-          warn("\tExisting: #{dupe}")
-          warn("\tSkipping: #{block}")
-        else
-          pruned_blocks << block
-        end
-      end
-
       # Render a template once for each version
-      versions = pruned_blocks.map(&:ver).uniq.sort
+      versions = all_blocks.map(&:ver).uniq.sort
 
       namespaces = {}
 
       (versions.min).upto(versions.max) do |version|
-        blocks = pruned_blocks.select { |b| b.ver == version }
+        blocks = all_blocks.select { |b| b.ver == version }
 
         templates = blocks.map(&:template).uniq
 
@@ -166,7 +96,154 @@ module Literate
       log("Done.")
     end
 
+    DIFF_HEADER_INSERT_OFFSET = '<div class="diff">'.size
+    CSS_TEMPLATE_FILE = File.expand_path(File.join(__FILE__, '../', 'templates/diff.css.erb'))
+    HTML_TEMPLATE_FILE = File.expand_path(File.join(__FILE__, '../', 'templates/diff.html.erb'))
+    def extract_and_diff(markdown_file_path, diff_out_file_path)
+      if !File.exists?(diff_out_file_path)
+        raise "Error: Invalid path `#{diff_out_file_path}`"
+      end
+
+      blocks = extract_blocks(markdown_file_path, disable_filtering: true)
+
+      if blocks.empty?
+        warn("No blocks found in file.")
+        return
+      end
+
+      blocks_by_name = blocks.group_by do |block|
+        block.name
+      end
+
+      diffs = {}
+
+      blocks_by_name.each do |name, blocks|
+        blocks.sort_by! { |block| block.ver }
+        if blocks.size > 1
+          diffs[name] = []
+
+          (1).upto(blocks.size-1).each do |n|
+            a = blocks[n-1]
+            b = blocks[n]
+            diffs[name] << {
+              ver_a: a.ver,
+              ver_b: b.ver,
+              html: diff(a.blob, b.blob)
+            }
+          end
+        end
+      end
+
+      css_namespace = GenericNamespace.new({ css: Diffy::CSS })
+      css_template = File.open(CSS_TEMPLATE_FILE).read
+      css_out = ERB.new(css_template).result(css_namespace.get_binding)
+
+      File.open(File.join(diff_out_file_path, 'diff.css'), 'w+') do |f|
+        f.write css_out
+      end
+
+      html = diffs.inject("") do |memo, element|
+        name, diffs = element
+        memo += "\n<hr>\n"
+        memo += "<h1>Diffs for #{name}<h1>"
+
+        diffs.each do |diff|
+          header = "Betwixt versions #{diff[:ver_a]} & #{diff[:ver_b]}"
+          diff[:html].insert(DIFF_HEADER_INSERT_OFFSET, '<h4>' + header + '</h4>')
+          memo += diff[:html]
+        end
+        memo
+      end
+
+      template = File.open(HTML_TEMPLATE_FILE).read
+      title = "Diffs for #{File.basename(markdown_file_path)}"
+      namespace = GenericNamespace.new({ html: html, title: title })
+      File.open(File.join(diff_out_file_path, "diffs.html"), 'w+') do |f|
+        f.write ERB.new(template).result(namespace.get_binding)
+      end
+    end
+
     private
+
+    def extract_blocks(markdown_file_path, opts={})
+      if !File.exists?(markdown_file_path)
+        if !markdown_file_path.match(/\.md$/)
+          markdown_file_path += '.md'
+        end
+        if !File.exists?(markdown_file_path)
+          raise "Error: Unable to find markdown file `#{markdown_file_path}`"
+        end
+      end
+
+      blocks = []
+
+      begin
+        file = File.open(markdown_file_path, 'r')
+
+        while (!file.eof?) do
+          line = file.readline
+          if line.match(/^\{.*lang=\'[^\']+\'.*\}$/)
+            declaration_lineno = file.lineno
+            vars = line.scan(/(\w+)=\'([^\']+)\'/).to_h
+            values = vars.values_at('name', 'template', 'ver')
+            if values.none?
+              next
+            elsif values.all?
+              lines = []
+              indent_level = Float::INFINITY
+              while !file.eof && (line = file.readline) && (line.match(/^\s/) || line.empty?) do
+                if opts[:disable_filtering] || keep_line?(line)
+                  unless line == "\n"
+                    indent = line.scan(/^\s+/).first
+                    if indent && !indent.empty?
+                      indent_level = [indent.size, indent_level].min
+                    end
+                  end
+                  lines << line
+                end
+              end
+              unless indent_level == Float::INFINITY
+                lines.map! do |line|
+                  line.gsub(/^\s{#{indent_level}}/, '')
+                end
+              end
+              if lines.empty?
+                warn("Found a literate codeblock declared but nothing inside. (Line: #{declaration_lineno})")
+              else
+                blocks << CodeBlock.new(lines, values[0], values[1], values[2].to_i, declaration_lineno)
+              end
+            else
+              warn("Found an incomplete literate codeblock declaration. (Line: #{declaration_lineno})")
+              v = values.map { |v| '`' + v.inspect + '`' }.join(', ')
+              warn("Got #{v} for `name`, `template`, `ver`")
+            end
+          end
+        end
+      ensure
+        file.close
+      end
+
+      # Prune extraneous blocks
+      pruned_blocks = []
+      blocks.each do |block|
+        dupe = pruned_blocks.detect do |b|
+          [b.name, b.template, b.ver] == [block.name, block.template, block.ver]
+        end
+        if dupe
+          warn("Found a duplicate block declaration. Skipping.")
+          warn("\tExisting: #{dupe}")
+          warn("\tSkipping: #{block}")
+        else
+          pruned_blocks << block
+        end
+      end
+
+      return pruned_blocks
+    end
+
+    def diff(a, b)
+      Diffy::Diff.new(a, b).to_s(:html_simple)
+    end
 
     def warn(text)
       l "%s: WARN: %s" % [Time.now, text]
@@ -230,9 +307,27 @@ module Literate
       end
     end
 
-    def should_filter?(line)
-      Config.filter_lines_matching.detect do |f|
+    def keep_line?(line)
+      !Config.filter_lines_matching.detect do |f|
         line.match(f)
+      end
+    end
+
+    class GenericNamespace
+      def initialize(hash)
+        set(hash)
+      end
+
+      def get_binding
+        binding
+      end
+
+      private
+
+      def set(hash)
+        hash.each do |k, v|
+          instance_variable_set('@' + k.to_s, v)
+        end
       end
     end
   end

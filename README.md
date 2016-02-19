@@ -111,7 +111,7 @@ An array of filters which will be treated as regular expressions. Lines in your 
 
 **`filter_leanpub_code_comments`** (default: **true**)
 
-Leanpub code block comments will not be included in the rendered file. An example of one such comment:
+Leanpub code block comments will not be included in the rendered file. Example of one such comment in HTML:
 
 ````
 <!-- leanpub-start-insert -->
@@ -125,7 +125,7 @@ literate --gen-rc
 
 ## Dependencies
 
-None.
+One: `diffy` for diffing codeblocks. `diffy` has no dependencies.
 
 ## Installation
 
