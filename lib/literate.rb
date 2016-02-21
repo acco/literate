@@ -138,9 +138,12 @@ module Literate
       css_template = File.open(CSS_TEMPLATE_FILE).read
       css_out = ERB.new(css_template).result(css_namespace.get_binding)
 
-      File.open(File.join(diff_out_file_path, 'diff.css'), 'w+') do |f|
+      css_file_path = File.join(diff_out_file_path, 'diff.css')
+
+      File.open(css_file_path, 'w+') do |f|
         f.write css_out
       end
+      log("Wrote #{truncate_left(css_file_path, 50)}")
 
       html = diffs.inject("") do |memo, element|
         name, diffs = element
@@ -158,9 +161,12 @@ module Literate
       template = File.open(HTML_TEMPLATE_FILE).read
       title = "Diffs for #{File.basename(markdown_file_path)}"
       namespace = GenericNamespace.new({ html: html, title: title })
-      File.open(File.join(diff_out_file_path, "diffs.html"), 'w+') do |f|
+      diff_file_path = File.join(diff_out_file_path, "diffs.html")
+      File.open(diff_file_path, 'w+') do |f|
         f.write ERB.new(template).result(namespace.get_binding)
       end
+      log("Wrote #{truncate_left(diff_file_path, 50)}")
+      log("CMD+CLICK to view:\n" + diff_file_path)
     end
 
     private
