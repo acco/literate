@@ -9,24 +9,19 @@ require 'fileutils'
 # Usage
 #
 #   literate [markdown_file] [template_directory]
+#   literate [markdown_file1,markdownfile2,...] [template_directory]
 #
 # Examples
 #
 #   literate chapters/2-components.md code/public
+#   literate chapters/2-components.md,3-servers-and-components.md code/public
 
-def verify_and_resolve_paths!(paths)
-  paths.each do |name, path|
-    if path.nil? || path.empty?
-      puts "Error: Expected argument `#{name.to_s}`"
-      abort(USAGE_TEXT)
-    end
-
-    unless Pathname.new(path).absolute?
-      path = File.join(Dir.pwd, path)
-    end
+def resolve_path(path)
+  unless Pathname.new(path).absolute?
+    File.join(Dir.pwd, path)
+  else
+    path
   end
-
-  return paths.values
 end
 
 USAGE_TEXT = %{
@@ -56,23 +51,27 @@ if ARGV[0] == '--gen-rc'
 end
 
 if ARGV[0] == '-d'
-  markdown_file = ARGV[1]
+  markdown_files = ARGV[1] && ARGV[1].split(',')
   target_diff_directory = ARGV[2]
 
-  markdown_file, target_diff_directory = verify_and_resolve_paths!(
-    markdown_file: markdown_file,
-    target_diff_directory: target_diff_directory
-  )
+  if markdown_files.nil? || target_diff_directory.nil?
+    puts "Error: Expected arguments `markdown_file(s)` and `target_diff_directory`"
+    abort(USAGE_TEXT)
+  end
 
-  Literate::extract_and_diff(markdown_file, target_diff_directory)
+  Literate::extract_and_diff \
+    markdown_files.map { |f| resolve_path(f)},
+    resolve_path(target_diff_directory)
 else
-  markdown_file = ARGV[0]
+  markdown_files = ARGV[0] && ARGV[0].split(',')
   template_directory = ARGV[1]
 
-  markdown_file, template_directory = verify_and_resolve_paths!(
-    markdown_file: markdown_file,
-    template_directory: template_directory
-  )
+  if markdown_files.nil? || template_directory.nil?
+    puts "Error: Expected arguments `markdown_file(s)` and `template_directory`"
+    abort(USAGE_TEXT)
+  end
 
-  Literate::extract_and_render(markdown_file, template_directory)
+  Literate::extract_and_render \
+    markdown_files.map { |f| resolve_path(f)},
+    resolve_path(template_directory)
 end

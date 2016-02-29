@@ -8,7 +8,9 @@ require 'diffy'
 module Literate
 
   class << self
-    def extract_and_render(markdown_file_path, template_directory_path)
+    def extract_and_render(markdown_file_paths, template_directory_path)
+      markdown_file_paths = [ markdown_file_paths ].flatten
+
       if !File.exists?(template_directory_path)
         raise "Error: Unable to find template directory `#{template_directory_path}`"
       end
@@ -18,7 +20,7 @@ module Literate
         raise 'Error: Template files must end with extension `.erb`'
       end
 
-      all_blocks = extract_blocks(markdown_file_path)
+      all_blocks = extract_blocks(markdown_file_paths)
 
       if all_blocks.empty?
         warn("No blocks found in file.")
@@ -99,12 +101,13 @@ module Literate
     DIFF_HEADER_INSERT_OFFSET = '<div class="diff">'.size
     CSS_TEMPLATE_FILE = File.expand_path(File.join(__FILE__, '../', 'templates/diff.css.erb'))
     HTML_TEMPLATE_FILE = File.expand_path(File.join(__FILE__, '../', 'templates/diff.html.erb'))
-    def extract_and_diff(markdown_file_path, diff_out_file_path)
+    def extract_and_diff(markdown_file_paths, diff_out_file_path)
+      markdown_file_paths = [ markdown_file_paths ].flatten
       if !File.exists?(diff_out_file_path)
         raise "Error: Invalid path `#{diff_out_file_path}`"
       end
 
-      blocks = extract_blocks(markdown_file_path, disable_filtering: true)
+      blocks = extract_blocks(markdown_file_paths, disable_filtering: true)
 
       if blocks.empty?
         warn("No blocks found in file.")
@@ -159,7 +162,8 @@ module Literate
       end
 
       template = File.open(HTML_TEMPLATE_FILE).read
-      title = "Diffs for #{File.basename(markdown_file_path)}"
+      paths = markdown_file_paths.map {|path| File.basename(path) }
+      title = "Diffs for #{paths.join(', ')}"
       namespace = GenericNamespace.new({ html: html, title: title })
       diff_file_path = File.join(diff_out_file_path, "diffs.html")
       File.open(diff_file_path, 'w+') do |f|
@@ -171,62 +175,69 @@ module Literate
 
     private
 
-    def extract_blocks(markdown_file_path, opts={})
-      if !File.exists?(markdown_file_path)
-        if !markdown_file_path.match(/\.md$/)
-          markdown_file_path += '.md'
-        end
-        if !File.exists?(markdown_file_path)
-          raise "Error: Unable to find markdown file `#{markdown_file_path}`"
-        end
-      end
-
+    def extract_blocks(markdown_file_paths, opts={})
       blocks = []
 
-      begin
-        file = File.open(markdown_file_path, 'r')
+      markdown_file_paths.each do |markdown_file_path|
 
-        while (!file.eof?) do
-          line = file.readline
-          if line.match(/^\{.*lang=\'[^\']+\'.*\}$/)
-            declaration_lineno = file.lineno
-            vars = line.scan(/(\w+)=\'([^\']+)\'/).to_h
-            values = vars.values_at('name', 'template', 'ver')
-            if values.none?
-              next
-            elsif values.all?
-              lines = []
-              indent_level = Float::INFINITY
-              while !file.eof && (line = file.readline) && (line.match(/^\s/) || line.empty?) do
-                if opts[:disable_filtering] || keep_line?(line)
-                  unless line == "\n"
-                    indent = line.scan(/^\s+/).first
-                    if indent && !indent.empty?
-                      indent_level = [indent.size, indent_level].min
-                    end
-                  end
-                  lines << line
-                end
-              end
-              unless indent_level == Float::INFINITY
-                lines.map! do |line|
-                  line.gsub(/^\s{#{indent_level}}/, '')
-                end
-              end
-              if lines.empty?
-                warn("Found a literate codeblock declared but nothing inside. (Line: #{declaration_lineno})")
-              else
-                blocks << CodeBlock.new(lines, values[0], values[1], values[2].to_i, declaration_lineno)
-              end
-            else
-              warn("Found an incomplete literate codeblock declaration. (Line: #{declaration_lineno})")
-              v = values.map { |v| '`' + v.inspect + '`' }.join(', ')
-              warn("Got #{v} for `name`, `template`, `ver`")
-            end
+        if !File.exists?(markdown_file_path)
+          if !markdown_file_path.match(/\.md$/)
+            markdown_file_path += '.md'
+          end
+          if !File.exists?(markdown_file_path)
+            raise "Error: Unable to find markdown file `#{markdown_file_path}`"
           end
         end
-      ensure
-        file.close
+
+        begin
+          file = File.open(markdown_file_path, 'r')
+          filename = File.basename(markdown_file_path)
+
+          while (!file.eof?) do
+            line = file.readline
+            if line.match(/^\{.*lang=[\'|\w]+.*\}$/)
+              declaration_lineno = file.lineno
+              vars = line.scan(/([\w|\-]+)=\'?(\w+)\'?/).to_h
+              values = vars.values_at('name', 'template', 'ver')
+              if values.none?
+                next
+              elsif values.all?
+                lines = []
+                indent_level = Float::INFINITY
+                while !file.eof && (line = file.readline) && (line.match(/^\s/) || line.empty?) do
+                  if opts[:disable_filtering] || keep_line?(line)
+                    unless line == "\n"
+                      indent = line.scan(/^\s+/).first
+                      if indent && !indent.empty?
+                        indent_level = [indent.size, indent_level].min
+                      end
+                    end
+                    lines << line
+                  end
+                end
+                unless indent_level == Float::INFINITY
+                  lines.map! do |line|
+                    line.gsub(/^\s{#{indent_level}}/, '')
+                  end
+                end
+                if lines.empty?
+                  warn("Found a literate codeblock declared but nothing inside. (Line: #{declaration_lineno})")
+                else
+                  blocks << CodeBlock.new(
+                    lines, values[0], values[1], values[2].to_i,
+                    declaration_lineno, filename
+                  )
+                end
+              else
+                warn("Found an incomplete literate codeblock declaration. (Line: #{declaration_lineno})")
+                v = values.map { |v| '`' + v.inspect + '`' }.join(', ')
+                warn("Got #{v} for `name`, `template`, `ver`")
+              end
+            end
+          end
+        ensure
+          file.close
+        end
       end
 
       # Prune extraneous blocks
@@ -269,7 +280,7 @@ module Literate
       end
     end
 
-    class CodeBlock < Struct.new(:lines, :name, :template, :ver, :lineno)
+    class CodeBlock < Struct.new(:lines, :name, :template, :ver, :lineno, :filename)
 
       def blob
         lines.join
